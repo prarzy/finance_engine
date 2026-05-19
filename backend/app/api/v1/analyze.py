@@ -64,38 +64,41 @@ async def analyze(
     
     # Persist transaction if user is authenticated
     if current_user is not None:
+        rec = result["recommended"]
         txn = Transaction(
             user_id=current_user.id,
             amount=body.amount,
             source_currency=body.source_currency,
             target_currency=body.target_currency,
             mid_market_rate=result["mid_market_rate"],
-            recommended_method=result["recommended"]["method_name"],
-            estimated_cost_usd=result["recommended"]["total_cost_usd"],
+            recommended_method=rec["method_name"],
+            estimated_cost_usd=rec["total_cost_usd"],
             savings_vs_worst_usd=result["savings_vs_worst_usd"],
+            hop_count=rec.get("hop_count", 1),
+            route_path=rec.get("path"),
         )
         db.add(txn)
         await db.flush()
-        
-        # Add routes
+
+        # Persist all ranked routes with multi-hop breakdown
         for r in result["all_routes"]:
-            route_data = {
-                k: r[k]
-                for k in [
-                    "method_name",
-                    "total_cost_usd",
-                    "fx_spread_pct",
-                    "fx_cost_usd",
-                    "fixed_fee_usd",
-                    "variable_fee_pct",
-                    "variable_fee_usd",
-                    "processing_days",
-                    "rank",
-                    "is_recommended",
-                ]
-            }
-            db.add(Route(transaction_id=txn.id, **route_data))
-        
+            db.add(Route(
+                transaction_id=txn.id,
+                method_name=r["method_name"],
+                total_cost_usd=r["total_cost_usd"],
+                fx_spread_pct=r["fx_spread_pct"],
+                fx_cost_usd=r["fx_cost_usd"],
+                fixed_fee_usd=r["fixed_fee_usd"],
+                variable_fee_pct=r["variable_fee_pct"],
+                variable_fee_usd=r["variable_fee_usd"],
+                processing_days=r["processing_days"],
+                rank=r["rank"],
+                is_recommended=r["is_recommended"],
+                hop_count=r.get("hop_count", 1),
+                path=r.get("path"),
+                breakdown=r.get("steps"),
+            ))
+
         await db.commit()
     
     return AnalyzeResponse(**result)

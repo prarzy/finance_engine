@@ -54,34 +54,40 @@ class FXService:
             return float(cached)
 
         rate: float | None = None
+        last_error: str | None = None
 
         # Primary API
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(
-                    f"https://v6.exchangerate-api.com/v6/{self.settings.EXCHANGERATE_API_KEY}/pair/{base}/{target}"
+                    f"https://v6.exchangerate-api.com/v6/{self.settings.EXCHANGERATE_API_KEY}/pair/{base}/{target}",
+                    follow_redirects=True
                 )
-                if response.status_code == 200:
-                    data = response.json()
+                response.raise_for_status()
+                data = response.json()
+                if "conversion_rate" in data:
                     rate = data["conversion_rate"]
-        except Exception:
-            pass
+        except Exception as e:
+            last_error = f"ExchangeRate-API: {str(e)}"
 
         # Fallback API
         if rate is None:
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     response = await client.get(
-                        f"https://api.frankfurterapp.org/latest?from={base}&to={target}"
+                        f"https://api.frankfurterapp.org/latest?from={base}&to={target}",
+                        follow_redirects=True
                     )
-                    if response.status_code == 200:
-                        data = response.json()
+                    response.raise_for_status()
+                    data = response.json()
+                    if "rates" in data and target in data["rates"]:
                         rate = data["rates"][target]
-            except Exception:
-                pass
+            except Exception as e:
+                last_error = f"Frankfurter API: {str(e)}"
 
         if rate is None:
-            raise ServiceUnavailableError("FX rates unavailable")
+            error_msg = f"FX rates unavailable. {last_error}" if last_error else "FX rates unavailable"
+            raise ServiceUnavailableError(error_msg)
 
         fx_cache.set(cache_key, str(rate), self.settings.FX_CACHE_TTL_SECONDS)
         return rate
