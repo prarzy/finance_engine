@@ -9,7 +9,7 @@ export default function RouteCardList({ routes = [] }) {
     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
       {routes.map((route, i) => (
         <RouteCard
-          key={route.method_name}
+          key={`${route.method_name}-${i}`}
           route={route}
           worstCost={worstCost}
           index={i}

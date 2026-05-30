@@ -8,15 +8,16 @@ const CURRENCIES = [
   { code: "GBP", symbol: "£",    name: "British Pound"    },
   { code: "INR", symbol: "₹",    name: "Indian Rupee"     },
   { code: "AED", symbol: "د.إ",  name: "UAE Dirham"       },
+  { code: "SGD", symbol: "S$",   name: "Singapore Dollar" },
+  { code: "CAD", symbol: "C$",   name: "Canadian Dollar"  },
+  { code: "AUD", symbol: "A$",   name: "Australian Dollar"},
+  { code: "JPY", symbol: "¥",    name: "Japanese Yen"     },
 ];
 
 const ALL_METHODS = [
   { key: "revolut",       label: "Revolut",       spread: "0.20%" },
   { key: "wise",          label: "Wise",           spread: "0.45%" },
-  { key: "crypto",        label: "Crypto",         spread: "0.50%" },
   { key: "bank_transfer", label: "Bank Transfer",  spread: "1.50%" },
-  { key: "debit_card",    label: "Debit Card",     spread: "1.80%" },
-  { key: "credit_card",   label: "Credit Card",    spread: "2.50%" },
   { key: "paypal",        label: "PayPal",         spread: "3.00%" },
 ];
 
@@ -79,16 +80,36 @@ function CurrencySelect({ id, value, onChange, disabled, borderRadius }) {
   );
 }
 
-export default function PaymentForm({ form, updateField, loading, error, onSubmit }) {
+export default function PaymentForm({ form, updateField, loading, error, onSubmit, limitResults = [], limitChecking = false, onCheckLimits = () => {} }) {
   const selectedSet = new Set(form.available_methods ?? ALL_METHODS.map((m) => m.key));
   const allChecked  = form.available_methods === null;
   const symbol      = symbolFor(form.source_currency ?? "USD");
+  const sameCurrency = form.source_currency === form.target_currency;
+
+  // Determine if we have any valid providers
+  const anyValid = limitResults.length === 0 || limitResults.some(r => r.valid);
+  const canSubmit = anyValid && !limitChecking && !loading && !sameCurrency;
+
+  // Call onCheckLimits when amount changes
+  const handleAmountChange = (e) => {
+    updateField("amount", e.target.value);
+    const methods = form.available_methods ?? ALL_METHODS.map((m) => m.key);
+    if (methods.length > 0) {
+      onCheckLimits(e.target.value, form.source_currency, form.target_currency, methods);
+    }
+  };
 
   function handleMethodToggle(key) {
     const next = new Set(selectedSet);
     next.has(key) ? next.delete(key) : next.add(key);
     const arr = ALL_METHODS.map((m) => m.key).filter((k) => next.has(k));
-    updateField("available_methods", arr.length === ALL_METHODS.length ? null : arr);
+    const newMethods = arr.length === ALL_METHODS.length ? null : arr;
+    updateField("available_methods", newMethods);
+    // Trigger limit check with new methods
+    const methodsToCheck = newMethods ?? ALL_METHODS.map((m) => m.key);
+    if (form.amount && methodsToCheck.length > 0) {
+      onCheckLimits(form.amount, form.source_currency, form.target_currency, methodsToCheck);
+    }
   }
 
   function handleAmountBlur(e) {
@@ -132,11 +153,23 @@ export default function PaymentForm({ form, updateField, loading, error, onSubmi
           </div>
         )}
 
+        {/* Same currency validation */}
+        {sameCurrency && (
+          <div style={{
+            marginBottom: "16px", padding: "10px 14px",
+            background: "#FEE2E2", border: "0.5px solid #FCA5A5",
+            borderRadius: "var(--radius-md)",
+            fontSize: "13px", color: "#7F1D1D",
+          }}>
+            Source and target currencies must be different.
+          </div>
+        )}
+
         {/* ── Amount ─────────────────────────────────────────────────────── */}
         <label style={{ fontSize: "10px", color: "#7A7570", letterSpacing: "0.07em", textTransform: "uppercase", display: "block", marginBottom: "7px" }}>
           Amount
         </label>
-        <div style={{ position: "relative", marginBottom: "24px" }}>
+        <div style={{ position: "relative", marginBottom: "8px" }}>
           {/* Dynamic currency symbol */}
           <span style={{
             position: "absolute", left: "14px", top: "50%",
@@ -153,7 +186,7 @@ export default function PaymentForm({ form, updateField, loading, error, onSubmi
             inputMode="decimal"
             placeholder="1,000.00"
             value={form.amount}
-            onChange={(e) => updateField("amount", e.target.value)}
+            onChange={handleAmountChange}
             onBlur={handleAmountBlur}
             disabled={loading}
             style={{
@@ -173,6 +206,27 @@ export default function PaymentForm({ form, updateField, loading, error, onSubmi
             }}
           />
         </div>
+
+        {/* Limit warnings */}
+        {limitResults.filter(r => !r.valid).length > 0 && (
+          <div style={{ marginBottom: "16px", padding: "10px 14px", background: "#FEF3C7", border: "0.5px solid #F59E0B", borderRadius: "var(--radius-md)", fontSize: "12px", color: "#7C2D12" }}>
+            {limitResults.filter(r => !r.valid).map((r, idx) => (
+              <div key={idx} style={{ marginBottom: idx < limitResults.filter(r => !r.valid).length - 1 ? "6px" : 0 }}>
+                <strong>{r.provider}:</strong> {r.error} {r.max_transfer_usd && `(max $${r.max_transfer_usd.toLocaleString()})`}
+              </div>
+            ))}
+          </div>
+        )}
+        {!anyValid && limitResults.length > 0 && (
+          <div style={{
+            marginBottom: "16px", padding: "12px 14px",
+            background: "#FEE2E2", border: "0.5px solid #FCA5A5",
+            borderRadius: "var(--radius-md)",
+            fontSize: "13px", color: "#7F1D1D",
+          }}>
+            No selected provider supports this amount for this corridor. Reduce the amount or select different providers.
+          </div>
+        )}
 
         {/* ── Currency pair ───────────────────────────────────────────────── */}
         <label style={{ fontSize: "10px", color: "#7A7570", letterSpacing: "0.07em", textTransform: "uppercase", display: "block", marginBottom: "7px" }}>
@@ -260,11 +314,25 @@ export default function PaymentForm({ form, updateField, loading, error, onSubmi
         {/* ── Submit ──────────────────────────────────────────────────────── */}
         <button
           type="submit"
-          disabled={loading}
+          disabled={!canSubmit}
           className="btn btn-primary"
-          style={{ height: "50px", borderRadius: "var(--radius-lg)" }}
+          style={{ 
+            height: "50px", 
+            borderRadius: "var(--radius-lg)",
+            opacity: !canSubmit ? 0.5 : 1,
+            cursor: !canSubmit ? "not-allowed" : "pointer",
+          }}
         >
-          {loading ? (
+          {limitChecking ? (
+            <>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                style={{ animation: "spin 0.8s linear infinite" }}>
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+              </svg>
+              Checking limits…
+            </>
+          ) : loading ? (
             <>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2" strokeLinecap="round"

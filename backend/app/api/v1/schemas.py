@@ -130,3 +130,59 @@ class TransactionOut(BaseModel):
     route_path: list[str] | None = None
     created_at: datetime
     routes: list[RouteOut] = []
+
+
+# ── Constraint / corridor schemas ──────────────────────────────────────────────
+
+class CurrencyOut(BaseModel):
+    """Currency metadata."""
+    code: str
+    name: str
+    symbol: str
+    can_hold: bool
+    is_source_only: bool
+
+
+class CorridorOut(BaseModel):
+    """Provider corridor constraint."""
+    provider_slug: str
+    source_currency: str
+    target_currency: str
+    max_transfer_usd: float | None
+    min_transfer_usd: float
+    kyc_tier_required: int
+    settlement_hours: int = 24  # Settlement time in hours
+
+
+class LimitCheckResult(BaseModel):
+    """Individual provider limit check result."""
+    provider: str
+    valid: bool
+    error: str | None = None
+    max_transfer_usd: float | None = None
+
+
+class TransferLimitCheckRequest(BaseModel):
+    """Request to check transfer limits for multiple providers."""
+    source_currency: str = Field(min_length=3, max_length=3)
+    target_currency: str = Field(min_length=3, max_length=3)
+    amount: float = Field(gt=0)
+    methods: list[str]  # Array of provider slugs to check
+
+    @field_validator("source_currency", "target_currency", mode="before")
+    @classmethod
+    def uppercase_currency(cls, v: str) -> str:
+        return v.upper()
+
+
+class TransferLimitCheckResponse(BaseModel):
+    """Response with per-provider limit check results."""
+    results: list[LimitCheckResult]
+    any_valid: bool
+    amount_usd: float
+
+
+class SupportedRoutesResponse(BaseModel):
+    """Response listing all supported corridors."""
+    currencies: list[CurrencyOut]
+    corridors_by_provider: dict[str, list[CorridorOut]]  # provider_slug -> list of corridors

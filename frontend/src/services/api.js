@@ -7,6 +7,7 @@
  */
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
+export { BASE_URL as API_BASE_URL };
 
 // ─── shared helper ────────────────────────────────────────────────────────────
 
@@ -160,3 +161,73 @@ export async function getHistory(token, params = {}) {
 
   return parseResponse(res);
 }
+
+// ─── New constraint-based endpoints ────────────────────────────────────────────
+
+/**
+ * POST /check-limits
+ *
+ * Pre-validates transfer limits for a corridor WITHOUT running Dijkstra.
+ * Called by frontend on amount change with debounce.
+ * Returns per-provider validity for the direct corridor.
+ *
+ * @param {{ source_currency: string, target_currency: string, amount: number, methods: string[] }} body
+ * @param {string|null} token  Optional JWT
+ * @returns {Promise<{ results: Array<{provider: string, valid: boolean, error: string|null, max_transfer_usd: number|null}>, any_valid: boolean, amount_usd: number }>}
+ */
+export async function checkLimits(body, token = null) {
+  const res = await fetch(`${BASE_URL}/check-limits`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeader(token),
+    },
+    body: JSON.stringify(body),
+  });
+
+  return parseResponse(res);
+}
+
+/**
+ * GET /corridors
+ *
+ * Returns all supported currencies and corridors grouped by provider.
+ * Used by the Supported Routes & Currencies page.
+ *
+ * @returns {Promise<{ currencies: Array<{code: string, name: string, symbol: string, can_hold: boolean, is_source_only: boolean}>, corridors_by_provider: {[provider_slug]: Array} }>}
+ */
+export async function getSupportedRoutes() {
+  const res = await fetch(`${BASE_URL}/corridors`);
+  return parseResponse(res);
+}
+
+/**
+ * GET /dashboard/summary  (requires auth)
+ *
+ * Returns dashboard stats for logged-in user.
+ *
+ * @param {string} token
+ * @returns {Promise<{ total_analyses: number, total_saved_usd: number, most_analyzed_corridor: string|null, recent_transactions: Array<{id: string, source: string, target: string, amount: number, hop_count: number, created_at: string}>, top_corridors: Array<{corridor: string, count: number}> }>}
+ */
+export async function getDashboardSummary(token) {
+  const res = await fetch(`${BASE_URL}/dashboard/summary`, {
+    headers: authHeader(token),
+  });
+
+  return parseResponse(res);
+}
+
+// ─── Namespace export ──────────────────────────────────────────────────────────
+// Aggregates all API methods for convenient import: import { api } from "./api"
+
+export const api = {
+  analyzePayment,
+  getRecommendation,
+  login,
+  register,
+  getMe,
+  getHistory,
+  checkLimits,
+  getSupportedRoutes,
+  getDashboardSummary,
+};

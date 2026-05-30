@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
 
 from app.core.config import settings
+from app.services.constraint_service import constraint_service
+from app.db.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +17,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
     # Startup
-    logger.info("Application started")
+    logger.info("Application starting up...")
+    async with AsyncSessionLocal() as session:
+        await constraint_service.load(session)
+    logger.info("Constraint service loaded.")
     yield
     # Shutdown
-    logger.info("Application stopped")
+    logger.info("Application shutting down...")
 
 
 app = FastAPI(
@@ -57,6 +62,18 @@ try:
     app.include_router(analyze_router, prefix="/api/v1", tags=["analyze"])
 except Exception as e:
     logger.warning(f"Failed to load analyze router: {e}")
+
+try:
+    from app.api.v1.corridors import router as corridors_router
+    app.include_router(corridors_router, prefix="/api/v1", tags=["corridors"])
+except Exception as e:
+    logger.warning(f"Failed to load corridors router: {e}")
+
+try:
+    from app.api.v1.dashboard import router as dashboard_router
+    app.include_router(dashboard_router, prefix="/api/v1", tags=["dashboard"])
+except Exception as e:
+    logger.warning(f"Failed to load dashboard router: {e}")
 
 
 # Exception handlers
