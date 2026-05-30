@@ -2,8 +2,10 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import Depends
+import networkx as nx
 
-from app.core.graph import PaymentGraph, PAYMENT_RAILS
+from app.core.graph import PaymentGraph
+from app.services.constraint_service import constraint_service
 from app.services.fx_service import FXService, get_fx_service
 from app.core.exceptions import BadRequestError
 
@@ -48,32 +50,47 @@ class RouteAnalyzer:
             usd_rate = await self.fx_service.get_rate(source_currency, "USD")
             amount_usd = amount * usd_rate
 
-        # ── 3. Fetch live spreads for each requested method ───────────────────
-        methods = available_methods or list(PAYMENT_RAILS.keys())
-        live_spreads: dict[str, float] = {}
-        for method in methods:
-            if method in PAYMENT_RAILS:
-                live_spreads[method] = await self.fx_service.get_spread_estimate(method)
+        # ── 3. Get available providers from constraint service ──────────────────
+        # For now, use all active providers if available_methods is not specified
+        if available_methods is None:
+            available_methods = ["wise", "revolut", "bank_transfer", "paypal"]
+        else:
+            # Filter to only valid providers
+            available_methods = [m for m in available_methods if m in ["wise", "revolut", "bank_transfer", "paypal"]]
 
-        # ── 4. Build graph and enumerate routes ───────────────────────────────
-        graph = PaymentGraph(
-            amount_usd=amount_usd,
+        # ── 4. Build constraint-based graph and find routes ──────────────────
+        graph_engine = PaymentGraph(constraint_service)
+        graph = graph_engine.build(
             source_currency=source_currency,
             target_currency=target_currency,
-            available_methods=methods,
-            live_spreads=live_spreads,
+            amount_usd=amount_usd,
+            requested_providers=available_methods,
+            kyc_tier=1,  # TODO: get from current user
+            fx_rates={},
         )
 
-        all_routes = graph.get_all_routes(top_n=10)
-        optimal    = graph.get_optimal_route()
+        # Find optimal and all routes
+        optimal_path = graph_engine.find_optimal_route(graph, source_currency, target_currency)
+        all_paths = graph_engine.find_all_routes(graph, source_currency, target_currency, max_hops=3)
 
-        if not optimal or not all_routes:
+        if not optimal_path or not all_paths:
             raise BadRequestError(
                 f"No routes found between {source_currency} and {target_currency} "
                 f"with the selected methods. Try enabling more payment methods."
             )
 
-        savings_usd = graph.get_savings_vs_worst(all_routes)
+        # Convert paths to route dicts
+        optimal = self._path_to_route_dict(optimal_path, graph, source_currency, target_currency, 1, True)
+        all_routes = []
+        for rank, path in enumerate(all_paths[:10], start=1):
+            all_routes.append(self._path_to_route_dict(path, graph, source_currency, target_currency, rank, rank == 1))
+
+        # Calculate savings
+        if len(all_routes) < 2:
+            savings_usd = 0.0
+        else:
+            savings_usd = round(all_routes[-1]["total_cost_usd"] - all_routes[0]["total_cost_usd"], 4)
+        
         savings_pct = round((savings_usd / amount_usd) * 100, 4) if amount_usd else 0
 
         return {
@@ -87,6 +104,66 @@ class RouteAnalyzer:
             "savings_vs_worst_usd": savings_usd,
             "savings_vs_worst_pct": savings_pct,
             "timestamp":            datetime.utcnow().isoformat() + "Z",
+        }
+
+    def _path_to_route_dict(
+        self,
+        path: list[str],
+        graph: nx.DiGraph,
+        source: str,
+        target: str,
+        rank: int,
+        is_recommended: bool,
+    ) -> dict[str, Any]:
+        """Convert a NetworkX path to a route dict."""
+        total_cost = 0.0
+        max_days = 0
+        steps = []
+        method_name = "unknown"
+        
+        # Calculate costs from edges
+        for i in range(len(path) - 1):
+            edge_data = graph.get_edge_data(path[i], path[i+1])
+            if edge_data is None:
+                continue
+            
+            weight = edge_data.get("weight", 0)
+            total_cost += weight
+            settlement = edge_data.get("settlement_hours", 0)
+            max_days = max(max_days, settlement // 24 if settlement else 0)
+            
+            # Extract method name from method nodes
+            if "__" in path[i+1]:  # This is a method node
+                parts = path[i+1].split("__")
+                if len(parts) >= 3:
+                    method_name = parts[0]
+        
+        hop_count = len([n for n in path if "__" in n])
+        
+        # For single-hop, use the provider method name
+        if hop_count == 1:
+            for n in path:
+                if "__" in n:
+                    parts = n.split("__")
+                    method_name = parts[0]
+        else:
+            method_name = "multi_hop"
+        
+        return {
+            "method_name": method_name,
+            "total_cost_usd": round(total_cost, 4),
+            "fx_spread_pct": 0,
+            "fx_cost_usd": 0,
+            "fixed_fee_usd": 0,
+            "variable_fee_pct": 0,
+            "variable_fee_usd": 0,
+            "processing_days": max_days,
+            "rank": rank,
+            "is_recommended": is_recommended,
+            "path": path,
+            "currency_path": [n for n in path if "__" not in n],
+            "steps": steps,
+            "hop_count": hop_count,
         }
 
 

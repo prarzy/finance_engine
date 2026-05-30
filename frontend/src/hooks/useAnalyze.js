@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { analyzePayment } from "../services/api";
+import { useState, useCallback, useRef } from "react";
+import { analyzePayment, checkLimits } from "../services/api";
 
 /**
  * useAnalyze — custom hook (frontend_plan.md §4)
@@ -24,6 +24,44 @@ export function useAnalyze() {
 
   // API result — mirrors AnalyzeResponse exactly when populated
   const [result, setResult] = useState(null);
+
+  // Transfer limit validation
+  const [limitResults, setLimitResults] = useState([]);
+  const [limitChecking, setLimitChecking] = useState(false);
+  const debounceTimer = useRef(null);
+
+  // ── Helper: check transfer limits for selected methods (debounced) ──────────
+  const checkTransferLimits = useCallback(async (amount, source, target, methods) => {
+    if (!amount || !source || !target || !methods || methods.length === 0) {
+      setLimitResults([]);
+      return;
+    }
+
+    // Clear any pending debounce timer
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+
+    // Set new debounce timer (400ms)
+    debounceTimer.current = setTimeout(async () => {
+      setLimitChecking(true);
+      try {
+        const result = await checkLimits({
+          source_currency: source,
+          target_currency: target,
+          amount: parseFloat(amount),
+          methods: methods,
+        });
+        setLimitResults(result.results || []);
+      } catch (err) {
+        // Silently fail on limit check errors — don't block form
+        console.warn("Limit check failed:", err.message);
+        setLimitResults([]);
+      } finally {
+        setLimitChecking(false);
+      }
+    }, 400);
+  }, []);
 
   // ── Helper: update a single form field and clear any stale error ──────────
   function updateField(field, value) {
@@ -102,5 +140,8 @@ export function useAnalyze() {
     result,
     submit,
     resetResult,
+    limitResults,
+    limitChecking,
+    checkTransferLimits,
   };
 }

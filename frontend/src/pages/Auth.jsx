@@ -1,42 +1,40 @@
 import { useState } from "react";
-import { login as apiLogin, register as apiRegister } from "../services/api";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { login as apiLogin, register as apiRegister } from "../services/api";
 
-/**
- * AuthPanel — Login / Register toggle
- *
- * Shown when token is null. Toggles between LoginForm and RegisterForm.
- */
-export default function AuthPanel() {
-  const { login } = useAuth();
+export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const { login } = useAuth();
+  const navigate = useNavigate();
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError(null);
+    setError("");
     setLoading(true);
 
     try {
+      let token, userData;
+      
       if (isLogin) {
-        // api.js login() correctly sends OAuth2 form-encoded (username/password)
         const data = await apiLogin(email, password);
-        const token = data.access_token;
-        const user = data.user || { email };
-        login(token, user);
+        token = data.access_token;
+        userData = data.user || { email };
       } else {
-        // Register then auto-login
         await apiRegister(email, password);
         const data = await apiLogin(email, password);
-        const token = data.access_token;
-        const user = data.user || { email };
-        login(token, user);
+        token = data.access_token;
+        userData = data.user || { email };
       }
+      
+      login(token, userData);
+      navigate("/dashboard");
     } catch (err) {
-      setError(err.message ?? "Authentication failed. Please try again.");
+      setError(err.message || "Authentication failed");
     } finally {
       setLoading(false);
     }
@@ -50,7 +48,6 @@ export default function AuthPanel() {
           {isLogin ? "Sign in" : "Create account"}
         </h1>
 
-        {/* Error banner */}
         {error && (
           <div
             className="mb-4 p-3 rounded-md text-sm"
@@ -65,7 +62,6 @@ export default function AuthPanel() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Email */}
           <div>
             <label
               htmlFor="auth-email"
@@ -95,7 +91,6 @@ export default function AuthPanel() {
             />
           </div>
 
-          {/* Password */}
           <div>
             <label
               htmlFor="auth-password"
@@ -124,35 +119,41 @@ export default function AuthPanel() {
             />
           </div>
 
-          {/* Submit button */}
           <button
             type="submit"
             disabled={loading}
             className="btn btn-primary w-full mt-6"
             style={{
-              backgroundColor: loading ? "rgba(28, 28, 26, 0.6)" : "var(--color-text-primary)",
-              color: "var(--color-canvas)",
+              backgroundColor: loading ? "rgba(58, 107, 74, 0.6)" : "var(--color-accent)",
+              color: "#fff",
+              width: "100%",
+              height: "40px",
+              borderRadius: "var(--radius-md)",
+              border: "none",
               cursor: loading ? "not-allowed" : "pointer",
               opacity: loading ? 0.6 : 1,
+              fontFamily: "inherit",
+              fontSize: "12px",
             }}
           >
             {loading ? "Processing..." : isLogin ? "Sign in" : "Create account"}
           </button>
         </form>
 
-        {/* Toggle link */}
         <div className="mt-6 text-center text-sm" style={{ color: "var(--color-text-secondary)" }}>
           {isLogin ? "Don't have an account? " : "Already have an account? "}
           <button
             type="button"
-            onClick={() => {
-              setIsLogin(!isLogin);
-              setError(null);
+            onClick={() => setIsLogin(!isLogin)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--color-text-primary)",
+              textDecoration: "underline",
+              cursor: "pointer",
             }}
-            className="btn-ghost"
-            style={{ color: "var(--color-text-accent)" }}
           >
-            {isLogin ? "Create one" : "Sign in"}
+            {isLogin ? "Create account" : "Sign in"}
           </button>
         </div>
       </div>

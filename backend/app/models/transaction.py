@@ -23,6 +23,7 @@ class Transaction(Base):
     # Multi-hop additions
     hop_count            = Column(Integer, default=1)
     route_path           = Column(JSONB, nullable=True)   # e.g. ["USD","revolut__USD__EUR","EUR"]
+    constraint_snapshot  = Column(JSONB, nullable=True)   # Constraints active at time of analysis
     created_at           = Column(DateTime(timezone=True), server_default=text("now()"), index=True)
 
     user   = relationship("User", back_populates="transactions")
