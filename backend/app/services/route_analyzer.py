@@ -6,6 +6,7 @@ import networkx as nx
 
 from app.core.graph import PaymentGraph
 from app.services.constraint_service import constraint_service
+from app.services.explanation_service import ExplanationService, ConstraintContext
 from app.services.fx_service import FXService, get_fx_service
 from app.core.exceptions import BadRequestError
 
@@ -65,7 +66,7 @@ class RouteAnalyzer:
             target_currency=target_currency,
             amount_usd=amount_usd,
             requested_providers=available_methods,
-            kyc_tier=1,  # TODO: get from current user
+            kyc_tier=2,  # TODO: get from current user
             fx_rates={},
         )
 
@@ -84,6 +85,24 @@ class RouteAnalyzer:
         all_routes = []
         for rank, path in enumerate(all_paths[:10], start=1):
             all_routes.append(self._path_to_route_dict(path, graph, source_currency, target_currency, rank, rank == 1))
+
+        # ── Generate explanations for recommended route only ──────────────────
+        constraint_ctx = ConstraintContext(
+            kyc_filtered_count=graph_engine.kyc_excluded_count,
+            amount_filtered_count=graph_engine.amount_excluded_count,
+        )
+
+        # Add explanations to optimal/recommended route only
+        optimal["explanations"] = ExplanationService.generate(
+            route=optimal,
+            all_routes=all_routes,
+            optimization_mode="cost",
+            constraint_context=constraint_ctx,
+        )
+
+        # Ensure alternate routes have empty explanations
+        for route in all_routes:
+            route["explanations"] = []
 
         # Calculate savings
         if len(all_routes) < 2:
@@ -118,6 +137,7 @@ class RouteAnalyzer:
         """Convert a NetworkX path to a route dict."""
         total_cost = 0.0
         max_days = 0
+        max_settlement_hours = 0
         steps = []
         method_name = "unknown"
         
@@ -131,6 +151,7 @@ class RouteAnalyzer:
             total_cost += weight
             settlement = edge_data.get("settlement_hours", 0)
             max_days = max(max_days, settlement // 24 if settlement else 0)
+            max_settlement_hours = max(max_settlement_hours, settlement)
             
             # Extract method name from method nodes
             if "__" in path[i+1]:  # This is a method node
@@ -158,6 +179,7 @@ class RouteAnalyzer:
             "variable_fee_pct": 0,
             "variable_fee_usd": 0,
             "processing_days": max_days,
+            "settlement_hours": max_settlement_hours,
             "rank": rank,
             "is_recommended": is_recommended,
             "path": path,

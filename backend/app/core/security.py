@@ -43,7 +43,7 @@ def verify_token(token: str) -> dict[str, Any] | None:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         return payload
-    except (jwt.ExpiredSignatureError, jwt.JWTError):
+    except (jwt.ExpiredSignatureError, Exception):
         return None
 
 

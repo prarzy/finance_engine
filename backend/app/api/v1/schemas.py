@@ -68,6 +68,9 @@ class RouteOut(BaseModel):
     path: list[str] = Field(default_factory=list)
     currency_path: list[str] = Field(default_factory=list)
     steps: list[RouteStepOut] = Field(default_factory=list)
+    
+    # ── Explainability field ──
+    explanations: list[str] = Field(default_factory=list)
 
 
 # ── Analyze response ───────────────────────────────────────────────────────────
