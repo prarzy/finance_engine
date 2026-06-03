@@ -21,3 +21,5 @@ node_modules/
 .ruff_cache/
 alembic/__pycache__/
 alembic/versions/__pycache__/
+PROJECT_SUMMARY.md
+

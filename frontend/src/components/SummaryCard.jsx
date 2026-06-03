@@ -156,6 +156,30 @@ export default function SummaryCard({ route, amountUsd, worstCost }) {
         <BreakdownBar label="Fees"     value={fees}                       worstCost={worstCost} color="var(--color-bar-fees)" />
         <BreakdownBar label="Total"    value={route.total_cost_usd ?? 0}  worstCost={worstCost} color="var(--color-bar-total)" />
       </div>
+
+      {/* ── Why This Route? — Explanations ── */}
+      {route.explanations && route.explanations.length > 0 && (
+        <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "0.5px solid #EAE6DF" }}>
+          <p style={{
+            fontSize: "9px",
+            color: "#B0AAA2",
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            marginBottom: "8px",
+            fontWeight: 600,
+          }}>
+            Why This Route?
+          </p>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "6px" }}>
+            {route.explanations.map((exp, i) => (
+              <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "13px", color: "#7A7570", lineHeight: "1.5" }}>
+                <span style={{ color: "#7A7570", flexShrink: 0, marginTop: "1px" }}>✓</span>
+                <span>{exp}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

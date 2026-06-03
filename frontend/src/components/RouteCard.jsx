@@ -115,6 +115,30 @@ export default function RouteCard({ route, worstCost, index }) {
           ))}
         </div>
 
+        {/* Why This Route? — Explanations */}
+        {route.explanations && route.explanations.length > 0 && (
+          <div style={{ marginTop: "12px", marginBottom: "12px" }}>
+            <p style={{
+              fontSize: "9px",
+              color: "#B0AAA2",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              marginBottom: "6px",
+              fontWeight: 600,
+            }}>
+              Why This Route?
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "4px" }}>
+              {route.explanations.map((exp, i) => (
+                <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: "6px", fontSize: "12px", color: "#7A7570", lineHeight: "1.4" }}>
+                  <span style={{ color: "#7A7570", flexShrink: 0, marginTop: "2px" }}>✓</span>
+                  <span>{exp}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Collapsible step breakdown */}
         {hasSteps && (
           <StepBreakdown

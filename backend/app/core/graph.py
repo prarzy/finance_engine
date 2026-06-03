@@ -13,6 +13,8 @@ SUPPORTED_CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED", "SGD", "CAD", "AUD", 
 class PaymentGraph:
     def __init__(self, constraint_service: ConstraintService):
         self.cs = constraint_service
+        self.kyc_excluded_count = 0
+        self.amount_excluded_count = 0
 
     def build(
         self,
@@ -38,6 +40,10 @@ class PaymentGraph:
         4. amount_usd > max_transfer_usd for that corridor step
         """
         G = nx.DiGraph()
+        
+        # Reset counters for this build
+        self.kyc_excluded_count = 0
+        self.amount_excluded_count = 0
 
         # Add all currency nodes
         for currency in SUPPORTED_CURRENCIES:
@@ -53,6 +59,7 @@ class PaymentGraph:
                 if p_slug != provider_slug:
                     continue
                 if corridor.kyc_tier_required > kyc_tier:
+                    self.kyc_excluded_count += 1
                     continue  # KYC insufficient — do not add edge
 
                 # Compute per-step cost
@@ -66,6 +73,7 @@ class PaymentGraph:
 
                 # Amount validation: if amount_usd exceeds max for this corridor step, skip
                 if corridor.max_transfer_usd is not None and amount_usd > corridor.max_transfer_usd:
+                    self.amount_excluded_count += 1
                     continue  # amount exceeds limit — do not add edge
 
                 if step_cost is None:
