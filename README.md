@@ -52,6 +52,8 @@ INR → Bank Transfer → USD → Revolut → EUR   ($4.00 vs $30.00 direct)
 | **Dynamic currency selection** | Dropdown selectors with live symbol update (₹, $, €, £, د.إ) |
 | **Savings comparison** | Best vs. worst ranked, savings ribbon on results screen |
 | **PostgreSQL** | Production-grade database with JSONB route storage and indexes |
+| **Route explainability** | Priority-ranked natural language explanations for route selection and exclusions |
+| **User Dashboard** | Premium dashboard displaying statistics, top corridors chart, and recent transaction history |
 
 ---
 
@@ -137,10 +139,11 @@ Framework:     FastAPI (async)
 Graph Engine:  NetworkX 3.x (Dijkstra + all_simple_paths)
 Database:      PostgreSQL 16 + asyncpg (async) + psycopg2 (Alembic)
 ORM:           SQLAlchemy 2.0 (async sessions)
-Migrations:    Alembic (2 revisions)
+Migrations:    Alembic (3 revisions)
 Auth:          JWT HS256 (python-jose) + bcrypt 4.0.1 (passlib)
 FX APIs:       ExchangeRate-API (primary) · Frankfurter (fallback)
 Cache:         In-memory TTL (5 min) per currency pair
+Explainability:ExplanationService (priority-ranked deterministic rule engine)
 ```
 
 ### Frontend
@@ -150,7 +153,7 @@ Styling:       Tailwind CSS + custom design tokens
 Fonts:         Cormorant Garamond (headings) · DM Mono (numbers)
 State:         useAnalyze custom hook
 API client:    services/api.js (fetch + OAuth2 form-encoded login)
-Route UI:      RoutePathFlow · StepBreakdown · SummaryCard · RouteCard
+Route UI:      RoutePathFlow · StepBreakdown · SummaryCard · RouteCard · DashboardPage · SupportedRoutesPage
 ```
 
 ---
@@ -165,6 +168,8 @@ finance_engine/
 │   │   ├── api/v1/
 │   │   │   ├── auth.py              # /register  /login  /me
 │   │   │   ├── analyze.py           # /analyze  /recommend  /history
+│   │   │   ├── corridors.py         # /check-limits  /corridors
+│   │   │   ├── dashboard.py         # /dashboard/summary
 │   │   │   └── schemas.py           # Pydantic models (RouteStepOut, RouteOut, ...)
 │   │   ├── core/
 │   │   │   ├── graph.py             # PaymentGraph — multi-hop Dijkstra engine
@@ -173,15 +178,22 @@ finance_engine/
 │   │   │   └── cache.py             # In-memory FX rate TTL cache
 │   │   ├── services/
 │   │   │   ├── fx_service.py        # ExchangeRate-API + Frankfurter fallback
+│   │   │   ├── explanation_service.py # Route explainability (Dijkstra decision reasons)
 │   │   │   └── route_analyzer.py    # Orchestrates graph build + route ranking
 │   │   ├── models/
 │   │   │   ├── user.py              # UUID PK, bcrypt password
 │   │   │   ├── transaction.py       # + hop_count, route_path JSONB
-│   │   │   └── route.py             # + hop_count, path JSONB, breakdown JSONB
+│   │   │   ├── route.py             # + hop_count, path JSONB, breakdown JSONB
+│   │   │   ├── currency.py          # Currencies table
+│   │   │   ├── provider.py          # Providers table
+│   │   │   ├── provider_corridor.py # Provider corridor constraints
+│   │   │   └── compliance_rule.py   # Compliance rules
 │   │   └── db/database.py           # asyncpg engine, pool_size=10
 │   ├── alembic/versions/
 │   │   ├── 5a9165c30fb6_create_initial_tables.py
-│   │   └── a1b2c3d4e5f6_multihop_postgresql.py   # JSONB cols + indexes
+│   │   ├── a1b2c3d4e5f6_multihop_postgresql.py   # JSONB cols + indexes
+│   │   └── b1c2d3e4f5a6_add_constraint_tables.py  # Corridor + Compliance tables
+│   ├── seed_constraints.py          # Seeds 9 currencies, 4 providers, ~280 corridors
 │   └── seed_user.py                 # Add users to PostgreSQL via psycopg2
 │
 ├── frontend/
@@ -196,14 +208,19 @@ finance_engine/
 │       │   ├── RouteCardList.jsx     # Ranked list of routes
 │       │   ├── RoutePathFlow.jsx     # [INR] → [Wise] → [USD] horizontal display
 │       │   └── StepBreakdown.jsx     # Collapsible per-hop cost detail
-│       ├── hooks/useAnalyze.js       # Form state + API call + result
-│       ├── services/api.js           # fetch wrappers
+│       ├── pages/
+│       │   ├── Auth.jsx              # Modal-based authentication
+│       │   ├── Analyze.jsx           # Payment routing form
+│       │   ├── Dashboard.jsx         # Static dashboard landing
+│       │   ├── DashboardPage.jsx     # Premium statistics & activity dashboard
+│       │   ├── History.jsx           # Transaction history list
+│       │   ├── SupportedRoutes.jsx   # Older corridors browser
+│       │   └── SupportedRoutesPage.jsx # Premium corridors browser with info banners
+│       ├── hooks/
+│       │   ├── useAuth.js            # Authentication state hook
+│       │   └── useAnalyze.js         # Form state + API call + limit check debounce
+│       ├── services/api.js           # Fetch API wrappers
 │       └── utils/routeUtils.js       # parsePath, formatMethodName, symbolFor
-│
-└── docs/
-    ├── redesign_spec.md
-    ├── api_contract.md
-    └── smart_payment_router_v4.html  # UI reference design
 ```
 
 ---
@@ -261,17 +278,14 @@ createdb finova
 
 # Run Alembic migrations
 alembic upgrade head
-```
 
-### 6. Seed a user
+# Seed constraints (currencies, providers, corridors)
+python seed_constraints.py
 
-```bash
+# Seed a user
 python seed_user.py your@email.com yourpassword
-```
 
-### 7. Start the backend
-
-```bash
+# Start the backend
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -295,31 +309,81 @@ App: **http://localhost:5173**
 |---|---|---|---|
 | `POST` | `/api/v1/auth/register` | — | Create account |
 | `POST` | `/api/v1/auth/login` | — | OAuth2 login → JWT |
-| `GET`  | `/api/v1/auth/me` | ✓ | Current user |
+| `GET`  | `/api/v1/auth/me` | ✓ | Current user profile |
 | `POST` | `/api/v1/analyze` | optional | Multi-hop route analysis |
 | `GET`  | `/api/v1/recommend` | — | Quick recommendation |
 | `GET`  | `/api/v1/history` | ✓ | Past transactions |
+| `POST` | `/api/v1/check-limits` | — | Pre-validate transfer limits |
+| `GET`  | `/api/v1/corridors` | — | Supported corridors grouped by provider |
+| `GET`  | `/api/v1/dashboard/summary` | ✓ | User dashboard summary statistics |
 | `GET`  | `/health` | — | Health check |
 
 ### Example response (`/analyze`)
 
 ```json
 {
+  "amount": 1000.0,
+  "source_currency": "INR",
+  "target_currency": "EUR",
+  "mid_market_rate": 0.0112,
+  "amount_usd": 11.2,
   "recommended": {
     "method_name": "multi_hop",
+    "total_cost_usd": 4.25,
+    "fx_spread_pct": 0.0,
+    "fx_cost_usd": 0.0,
+    "fixed_fee_usd": 0.0,
+    "variable_fee_pct": 0.0,
+    "variable_fee_usd": 0.0,
+    "processing_days": 1,
+    "settlement_hours": 24,
+    "rank": 1,
+    "is_recommended": true,
     "hop_count": 2,
-    "path": ["INR", "bank_transfer__INR__USD", "USD", "revolut__USD__EUR", "EUR"],
+    "path": ["INR", "wise__INR__USD", "USD", "revolut__USD__EUR", "EUR"],
     "currency_path": ["INR", "USD", "EUR"],
     "steps": [
-      { "from_currency": "INR", "method": "bank_transfer", "to_currency": "USD", "step_cost_usd": 30.0 },
-      { "from_currency": "USD", "method": "revolut",       "to_currency": "EUR", "step_cost_usd":  2.0 }
+      {
+        "from_currency": "INR",
+        "method": "wise",
+        "to_currency": "USD",
+        "fx_spread_pct": 0.45,
+        "fx_cost_usd": 0.08,
+        "fixed_fee_usd": 0.60,
+        "variable_fee_pct": 0.45,
+        "variable_fee_usd": 0.34,
+        "step_cost_usd": 1.02,
+        "processing_days": 1
+      }
     ],
-    "total_cost_usd": 32.0,
-    "is_recommended": true,
-    "rank": 1
+    "explanations": [
+      "Lowest total cost among all valid routes.",
+      "$12.50 cheaper than the next best alternative."
+    ]
   },
-  "all_routes": [ ...10 routes... ],
-  "savings_vs_worst_usd": 53.28
+  "all_routes": [
+    {
+      "method_name": "multi_hop",
+      "total_cost_usd": 4.25,
+      "fx_spread_pct": 0.0,
+      "fx_cost_usd": 0.0,
+      "fixed_fee_usd": 0.0,
+      "variable_fee_pct": 0.0,
+      "variable_fee_usd": 0.0,
+      "processing_days": 1,
+      "settlement_hours": 24,
+      "rank": 1,
+      "is_recommended": true,
+      "hop_count": 2,
+      "path": ["INR", "wise__INR__USD", "USD", "revolut__USD__EUR", "EUR"],
+      "currency_path": ["INR", "USD", "EUR"],
+      "steps": [],
+      "explanations": []
+    }
+  ],
+  "savings_vs_worst_usd": 53.28,
+  "savings_vs_worst_pct": 475.71,
+  "timestamp": "2026-06-04T14:48:00.000000Z"
 }
 ```
 
@@ -338,13 +402,14 @@ App: **http://localhost:5173**
 
 ## Roadmap
 
-| Feature | Description |
-|---|---|
-| History dashboard | Transaction history with savings tracking |
-| More currencies | JPY, SGD, CAD, CHF |
-| More rails | SEPA, SWIFT, UPI, Stripe |
-| Best time to pay | ML-based FX timing |
-| Browser extension | Checkout overlay with optimal route |
+| Feature | Status | Description |
+|---|---|---|
+| **History & Dashboard** | Completed | Transaction history with savings tracking and charts |
+| **Explainability Engine** | Completed | Deterministic prioritised natural language explanations |
+| **More currencies** | Partially Done | JPY, SGD, CAD, AUD completed. CHF upcoming |
+| **More rails** | Upcoming | SEPA, SWIFT, UPI, Stripe |
+| **Best time to pay** | Upcoming | ML-based FX timing |
+| **Browser extension** | Upcoming | Checkout overlay with optimal route |
 
 ---
 
