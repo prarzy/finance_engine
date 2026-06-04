@@ -1,11 +1,17 @@
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.v1.schemas import AnalyzeRequest, AnalyzeResponse, RecommendResponse, TransactionOut
+from app.api.v1.schemas import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    RecommendResponse,
+    TransactionOut,
+)
 from app.core.security import verify_token
 from app.core.config import Settings, get_settings
 from app.db.database import get_db
@@ -24,26 +30,25 @@ async def get_optional_user(
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
-    
+
     token = auth_header.split(" ", 1)[1]
     payload = verify_token(token)
     if not payload:
         return None
-    
+
     user_id_str = payload.get("sub")
     if not user_id_str:
         return None
-    
-    from uuid import UUID
+
     try:
         user_id = UUID(user_id_str)
     except ValueError:
         return None
-    
+
     user = await db.get(User, user_id)
     if not user or not user.is_active:
         return None
-    
+
     return user
 
 
@@ -61,10 +66,11 @@ async def analyze(
         body.target_currency,
         body.available_methods,
     )
-    
+
     # Persist transaction if user is authenticated
     if current_user is not None:
         rec = result["recommended"]
+
         txn = Transaction(
             user_id=current_user.id,
             amount=body.amount,
@@ -77,30 +83,33 @@ async def analyze(
             hop_count=rec.get("hop_count", 1),
             route_path=rec.get("path"),
         )
+
         db.add(txn)
         await db.flush()
 
         # Persist all ranked routes with multi-hop breakdown
         for r in result["all_routes"]:
-            db.add(Route(
-                transaction_id=txn.id,
-                method_name=r["method_name"],
-                total_cost_usd=r["total_cost_usd"],
-                fx_spread_pct=r["fx_spread_pct"],
-                fx_cost_usd=r["fx_cost_usd"],
-                fixed_fee_usd=r["fixed_fee_usd"],
-                variable_fee_pct=r["variable_fee_pct"],
-                variable_fee_usd=r["variable_fee_usd"],
-                processing_days=r["processing_days"],
-                rank=r["rank"],
-                is_recommended=r["is_recommended"],
-                hop_count=r.get("hop_count", 1),
-                path=r.get("path"),
-                breakdown=r.get("steps"),
-            ))
+            db.add(
+                Route(
+                    transaction_id=txn.id,
+                    method_name=r["method_name"],
+                    total_cost_usd=r["total_cost_usd"],
+                    fx_spread_pct=r["fx_spread_pct"],
+                    fx_cost_usd=r["fx_cost_usd"],
+                    fixed_fee_usd=r["fixed_fee_usd"],
+                    variable_fee_pct=r["variable_fee_pct"],
+                    variable_fee_usd=r["variable_fee_usd"],
+                    processing_days=r["processing_days"],
+                    rank=r["rank"],
+                    is_recommended=r["is_recommended"],
+                    hop_count=r.get("hop_count", 1),
+                    path=r.get("path"),
+                    breakdown=r.get("steps"),
+                )
+            )
 
         await db.commit()
-    
+
     return AnalyzeResponse(**result)
 
 
@@ -112,8 +121,12 @@ async def recommend(
     route_analyzer: RouteAnalyzer = Depends(get_route_analyzer),
 ) -> RecommendResponse:
     """Get payment route recommendations."""
-    result = await route_analyzer.analyze(amount, source_currency, target_currency)
-    
+    result = await route_analyzer.analyze(
+        amount,
+        source_currency,
+        target_currency,
+    )
+
     return RecommendResponse(
         recommended=result["recommended"],
         alternatives=result["all_routes"][1:4],
@@ -126,15 +139,15 @@ async def recommend(
 async def get_history(
     page: int = 1,
     page_size: int = Query(default=20, le=100),
-    current_user: User = Depends(get_optional_user),
+    current_user: Optional[User] = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[TransactionOut]:
     """Get transaction history for the current user."""
     from app.core.exceptions import UnauthorizedError
-    
+
     if current_user is None:
         raise UnauthorizedError()
-    
+
     query = (
         select(Transaction)
         .where(Transaction.user_id == current_user.id)
@@ -143,7 +156,73 @@ async def get_history(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
+
     result = await db.execute(query)
     transactions = result.scalars().all()
-    
+
     return [TransactionOut.model_validate(t) for t in transactions]
+
+
+@router.delete("/history/clear", status_code=200)
+async def clear_history(
+    current_user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all transactions and their associated routes for the current user."""
+    from app.core.exceptions import UnauthorizedError
+
+    if current_user is None:
+        raise UnauthorizedError()
+
+    # Clear routes first to respect FK constraints
+    subquery = select(Transaction.id).where(
+        Transaction.user_id == current_user.id
+    )
+
+    await db.execute(
+        delete(Route).where(Route.transaction_id.in_(subquery))
+    )
+
+    # Clear transactions
+    await db.execute(
+        delete(Transaction).where(Transaction.user_id == current_user.id)
+    )
+
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "message": "All transaction history cleared.",
+    }
+
+
+@router.delete("/history/{transaction_id}", status_code=200)
+async def delete_transaction(
+    transaction_id: UUID,
+    current_user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a single transaction by ID."""
+    from app.core.exceptions import UnauthorizedError, NotFoundError
+
+    if current_user is None:
+        raise UnauthorizedError()
+
+    stmt = select(Transaction).where(
+        Transaction.id == transaction_id,
+        Transaction.user_id == current_user.id,
+    )
+
+    result = await db.execute(stmt)
+    transaction = result.scalar_one_or_none()
+
+    if not transaction:
+        raise NotFoundError("Transaction not found.")
+
+    await db.delete(transaction)
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "message": "Transaction deleted successfully.",
+    }

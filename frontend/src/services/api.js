@@ -217,6 +217,37 @@ export async function getDashboardSummary(token) {
   return parseResponse(res);
 }
 
+/**
+ * DELETE /history/:transactionId  (requires auth)
+ *
+ * @param {string} transactionId
+ * @param {string} token
+ * @returns {Promise<{ status: string, message: string }>}
+ */
+export async function deleteTransaction(transactionId, token) {
+  const res = await fetch(`${BASE_URL}/history/${transactionId}`, {
+    method: "DELETE",
+    headers: authHeader(token),
+  });
+
+  return parseResponse(res);
+}
+
+/**
+ * DELETE /history/clear  (requires auth)
+ *
+ * @param {string} token
+ * @returns {Promise<{ status: string, message: string }>}
+ */
+export async function clearHistory(token) {
+  const res = await fetch(`${BASE_URL}/history/clear`, {
+    method: "DELETE",
+    headers: authHeader(token),
+  });
+
+  return parseResponse(res);
+}
+
 // ─── Namespace export ──────────────────────────────────────────────────────────
 // Aggregates all API methods for convenient import: import { api } from "./api"
 
@@ -230,4 +261,6 @@ export const api = {
   checkLimits,
   getSupportedRoutes,
   getDashboardSummary,
+  deleteTransaction,
+  clearHistory,
 };
