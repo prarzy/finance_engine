@@ -265,7 +265,13 @@ class ExplanationService:
         if len(metrics.routes_by_cost) < 2:
             return None
 
-        if route is metrics.routes_by_cost[0]:  # Is this the cheapest?
+        cheapest = metrics.routes_by_cost[0]
+        is_cheapest = (
+            route.get("method_name") == cheapest.get("method_name")
+            and route.get("path") == cheapest.get("path")
+            and abs(route.get("total_cost_usd", 0) - cheapest.get("total_cost_usd", 0)) < 0.001
+        )
+        if is_cheapest:  # Is this the cheapest?
             next_best = metrics.routes_by_cost[1]
             difference = next_best.get("total_cost_usd", 0) - route.get("total_cost_usd", 0)
             if difference > 0.01:  # Avoid noise

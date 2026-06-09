@@ -81,10 +81,10 @@ class RouteAnalyzer:
             )
 
         # Convert paths to route dicts
-        optimal = self._path_to_route_dict(optimal_path, graph, source_currency, target_currency, 1, True)
+        optimal = self._path_to_route_dict(optimal_path, graph, source_currency, target_currency, 1, True, amount_usd)
         all_routes = []
         for rank, path in enumerate(all_paths[:10], start=1):
-            all_routes.append(self._path_to_route_dict(path, graph, source_currency, target_currency, rank, rank == 1))
+            all_routes.append(self._path_to_route_dict(path, graph, source_currency, target_currency, rank, rank == 1, amount_usd))
 
         # ── Generate explanations for recommended route only ──────────────────
         constraint_ctx = ConstraintContext(
@@ -133,6 +133,7 @@ class RouteAnalyzer:
         target: str,
         rank: int,
         is_recommended: bool,
+        amount_usd: float = 0.0,
     ) -> dict[str, Any]:
         """Convert a NetworkX path to a route dict."""
         total_cost = 0.0
@@ -140,25 +141,50 @@ class RouteAnalyzer:
         max_settlement_hours = 0
         steps = []
         method_name = "unknown"
-        
+        total_fx_cost = 0.0
+        total_fixed_fee = 0.0
+        total_variable_fee = 0.0
+        fx_spread_pct = 0.0
+        variable_fee_pct = 0.0
+
         # Calculate costs from edges
         for i in range(len(path) - 1):
             edge_data = graph.get_edge_data(path[i], path[i+1])
             if edge_data is None:
                 continue
-            
+
             weight = edge_data.get("weight", 0)
             total_cost += weight
             settlement = edge_data.get("settlement_hours", 0)
             max_days = max(max_days, settlement // 24 if settlement else 0)
             max_settlement_hours = max(max_settlement_hours, settlement)
-            
-            # Extract method name from method nodes
-            if "__" in path[i+1]:  # This is a method node
-                parts = path[i+1].split("__")
+
+            # method_node → currency edges carry fee breakdown
+            if "__" in path[i]:
+                fx_c  = edge_data.get("fx_cost", 0)
+                var_f = edge_data.get("variable_fee", 0)
+                fix_f = edge_data.get("fixed_fee", 0)
+                total_fx_cost      += fx_c
+                total_variable_fee += var_f
+                total_fixed_fee    += fix_f
+                fx_spread_pct    = edge_data.get("fx_spread_pct", 0)
+                variable_fee_pct = edge_data.get("variable_fee_pct", 0)
+
+                parts = path[i].split("__")
                 if len(parts) >= 3:
                     method_name = parts[0]
-        
+                    steps.append({
+                        "from_currency":    edge_data.get("from_currency", parts[1]),
+                        "method":           parts[0],
+                        "to_currency":      edge_data.get("to_currency",   parts[2]),
+                        "fx_spread_pct":    edge_data.get("fx_spread_pct", 0),
+                        "fx_cost_usd":      fx_c,
+                        "fixed_fee_usd":    fix_f,
+                        "variable_fee_pct": edge_data.get("variable_fee_pct", 0),
+                        "variable_fee_usd": var_f,
+                        "step_cost_usd":    round(fx_c + var_f + fix_f, 4),
+                        "processing_days":  settlement // 24 if settlement else 0,
+                    })
         hop_count = len([n for n in path if "__" in n])
         
         # For single-hop, use the provider method name
@@ -173,11 +199,11 @@ class RouteAnalyzer:
         return {
             "method_name": method_name,
             "total_cost_usd": round(total_cost, 4),
-            "fx_spread_pct": 0,
-            "fx_cost_usd": 0,
-            "fixed_fee_usd": 0,
-            "variable_fee_pct": 0,
-            "variable_fee_usd": 0,
+            "fx_spread_pct": fx_spread_pct,
+            "fx_cost_usd": round(total_fx_cost, 4),
+            "fixed_fee_usd": round(total_fixed_fee, 4),
+            "variable_fee_pct": variable_fee_pct,
+            "variable_fee_usd": round(total_variable_fee, 4),
             "processing_days": max_days,
             "settlement_hours": max_settlement_hours,
             "rank": rank,

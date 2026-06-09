@@ -87,8 +87,13 @@ class PaymentGraph:
                            from_currency=src,
                            to_currency=tgt,
                            cost=step_cost,
+                           fx_cost=amount_usd * (provider_config["fx_spread_pct"] / 100),
+                           variable_fee=amount_usd * (provider_config["variable_fee_pct"] / 100),
+                           fixed_fee=provider_config["fixed_fee_usd"],
+                           fx_spread_pct=provider_config["fx_spread_pct"],
+                           variable_fee_pct=provider_config["variable_fee_pct"],
                            settlement_hours=provider_config["settlement_hours"])
-
+                
         return G
 
     def _compute_step_cost(
