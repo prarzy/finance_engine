@@ -99,6 +99,24 @@ export default function PaymentForm({ form, updateField, loading, error, onSubmi
     }
   };
 
+  // Re-run limit check when source currency changes
+  const handleSourceCurrencyChange = (val) => {
+    updateField("source_currency", val);
+    const methods = form.available_methods ?? ALL_METHODS.map((m) => m.key);
+    if (form.amount && methods.length > 0) {
+      onCheckLimits(form.amount, val, form.target_currency, methods);
+    }
+  };
+
+  // Re-run limit check when target currency changes
+  const handleTargetCurrencyChange = (val) => {
+    updateField("target_currency", val);
+    const methods = form.available_methods ?? ALL_METHODS.map((m) => m.key);
+    if (form.amount && methods.length > 0) {
+      onCheckLimits(form.amount, form.source_currency, val, methods);
+    }
+  };
+
   function handleMethodToggle(key) {
     const next = new Set(selectedSet);
     next.has(key) ? next.delete(key) : next.add(key);
@@ -238,7 +256,7 @@ export default function PaymentForm({ form, updateField, loading, error, onSubmi
           <CurrencySelect
             id="source_currency"
             value={form.source_currency}
-            onChange={(val) => updateField("source_currency", val)}
+            onChange={handleSourceCurrencyChange}
             disabled={loading}
             borderRadius="10px 0 0 10px"
           />
@@ -262,7 +280,7 @@ export default function PaymentForm({ form, updateField, loading, error, onSubmi
           <CurrencySelect
             id="target_currency"
             value={form.target_currency}
-            onChange={(val) => updateField("target_currency", val)}
+            onChange={handleTargetCurrencyChange}
             disabled={loading}
             borderRadius="0 10px 10px 0"
           />

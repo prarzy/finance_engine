@@ -12,6 +12,7 @@ from app.api.v1.schemas import (
 )
 from app.db.database import get_db
 from app.services.constraint_service import constraint_service
+from app.services.fx_service import FXService, get_fx_service
 from app.core.exceptions import BadRequestError
 
 router = APIRouter()
@@ -21,32 +22,42 @@ router = APIRouter()
 async def check_transfer_limits(
     request: TransferLimitCheckRequest,
     db: AsyncSession = Depends(get_db),
+    fx_service: FXService = Depends(get_fx_service),
 ) -> TransferLimitCheckResponse:
     """
     Check if an amount is valid for multiple provider corridors.
+    Converts the user's amount to USD before comparing against
+    USD-denominated corridor limits (fixes false positives for non-USD sources).
     Returns per-provider validation results.
     """
     source = request.source_currency.upper()
     target = request.target_currency.upper()
-    
+
+    # ── Convert amount to USD (corridor limits are always stored in USD) ────────
+    if source == "USD":
+        amount_usd = request.amount
+    else:
+        usd_rate = await fx_service.get_rate(source, "USD")
+        amount_usd = request.amount * usd_rate
+
     results = []
     any_valid = False
-    
+
     for provider_slug in request.methods:
         provider = provider_slug.lower()
         corridor = constraint_service.get_constraint(provider, source, target)
-        
+
         if corridor is None:
             results.append(LimitCheckResult(
                 provider=provider,
                 valid=False,
-                error=f"Corridor not supported",
+                error="Corridor not supported",
                 max_transfer_usd=None,
             ))
             continue
-        
-        # Check amount limits
-        if request.amount < corridor.min_transfer_usd:
+
+        # Compare the USD-equivalent amount against USD-denominated limits
+        if amount_usd < corridor.min_transfer_usd:
             results.append(LimitCheckResult(
                 provider=provider,
                 valid=False,
@@ -54,10 +65,10 @@ async def check_transfer_limits(
                 max_transfer_usd=corridor.max_transfer_usd,
             ))
             continue
-        
+
         if (
             corridor.max_transfer_usd is not None
-            and request.amount > corridor.max_transfer_usd
+            and amount_usd > corridor.max_transfer_usd
         ):
             results.append(LimitCheckResult(
                 provider=provider,
@@ -66,7 +77,7 @@ async def check_transfer_limits(
                 max_transfer_usd=corridor.max_transfer_usd,
             ))
             continue
-        
+
         # Amount is valid for this provider
         results.append(LimitCheckResult(
             provider=provider,
@@ -75,11 +86,11 @@ async def check_transfer_limits(
             max_transfer_usd=corridor.max_transfer_usd,
         ))
         any_valid = True
-    
+
     return TransferLimitCheckResponse(
         results=results,
         any_valid=any_valid,
-        amount_usd=request.amount,
+        amount_usd=round(amount_usd, 4),
     )
 
 
